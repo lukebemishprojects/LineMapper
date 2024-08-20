@@ -6,6 +6,8 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
 
 import java.io.ByteArrayOutputStream;
@@ -13,9 +15,11 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -27,18 +31,23 @@ import java.util.zip.ZipOutputStream;
 
 @CommandLine.Command(name = "linemapper", mixinStandardHelpOptions = true, description = "Map line numbers in bytecode given vineflower output")
 public class Main implements Runnable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+
     @CommandLine.Option(names = "--input", description = "Input jar", required = true)
     Path input;
-    
+
     @CommandLine.Option(names = "--output", description = "Output jar", required = true)
     Path output;
-    
-    @CommandLine.Option(names = "--vineflower", description = "Vineflower output", required = true)
-    Path vineflower;
+
+    @CommandLine.Option(names = "--vineflower", description = "Vineflower output", arity = "*")
+    List<Path> vineflowerPaths = List.of();
+
+    @CommandLine.Option(names = "--patches", description = "Patch archive files", arity = "*")
+    List<Path> patchPaths = List.of();
 
     @CommandLine.Option(names = "--batch-size", description = "How many class files to process at once")
     int batchSize = Runtime.getRuntime().availableProcessors();
-    
+
     public static void main(String[] args) {
         var exitCode = new CommandLine(new Main()).execute(args);
         System.exit(exitCode);
@@ -48,23 +57,48 @@ public class Main implements Runnable {
     public void run() {
         input = input.toAbsolutePath();
         output = output.toAbsolutePath();
-        vineflower = vineflower.toAbsolutePath();
+        Map<String, Map<Integer, Integer>> lineMappings = new HashMap<>();
+        Map<String, PatchFile> patches = new HashMap<>();
 
-        Map<String, Map<Integer, Integer>> mappings = new HashMap<>();
-        try (var is = Files.newInputStream(vineflower);
-             var zis = new ZipInputStream(is)) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.getName().endsWith(".java")) {
-                    Map<Integer, Integer> lines = getLineMap(entry.getExtra());
-                    if (lines != null) {
-                        mappings.put(entry.getName().substring(0, entry.getName().length()-5), lines);
+        for (var vineflower : vineflowerPaths) {
+            vineflower = vineflower.toAbsolutePath();
+            try (var is = Files.newInputStream(vineflower);
+                 var zis = new ZipInputStream(is)) {
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (entry.getName().endsWith(".java")) {
+                        Map<Integer, Integer> lines = getLineMap(entry.getExtra());
+                        if (lines != null) {
+                            lineMappings.put(entry.getName().substring(0, entry.getName().length()-5), lines);
+                        }
                     }
                 }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
             }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
         }
+
+        for (var patch : patchPaths) {
+            patch = patch.toAbsolutePath();
+            try (var is = Files.newInputStream(patch);
+                 var zis = new ZipInputStream(is)) {
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (entry.getName().endsWith(".java.patch")) {
+                        var bytes = zis.readAllBytes();
+                        var lines = new String(bytes, StandardCharsets.UTF_8).lines().toList();
+                        var name = entry.getName().substring(0, entry.getName().length()-".java.patch".length());
+                        if (patches.containsKey(name)) {
+                            LOGGER.warn("Duplicate patch file for class {}; choosing patch from {}", name, patch);
+                        }
+                        patches.put(name, PatchFile.fromLines(entry.getName(), lines));
+                    }
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
         try {
             Files.createDirectories(output.getParent());
         } catch (IOException e) {
@@ -94,7 +128,7 @@ public class Main implements Runnable {
                     labelled[i] = new byte[0];
                 }
 
-                mapEntries(mappings, labelled, entries, futures);
+                mapEntries(lineMappings, patches, labelled, entries, futures);
 
                 for (int j = 0; j < batchSize; j++) {
                     var entryIn = entries[j];
@@ -129,7 +163,7 @@ public class Main implements Runnable {
         }
     }
 
-    private void mapEntries(Map<String, Map<Integer, Integer>> mappings, byte[][] labelled, Entry[] entries, Future<?>[] futures) {
+    private void mapEntries(Map<String, Map<Integer, Integer>> mappings, Map<String, PatchFile> patches, byte[][] labelled, Entry[] entries, Future<?>[] futures) {
         for (int i = 0; i < batchSize; i++) {
             var entry = entries[i];
             if (entry == null) {
@@ -138,12 +172,15 @@ public class Main implements Runnable {
             var number = i;
             futures[i] = executorService.submit(() -> {
                 if (entry.entry().getName().endsWith(".class")) {
-                    var lines = mappings.get(entry.entry().getName().substring(0, entry.entry().getName().length()-6));
-                    if (lines != null) {
-                        labelled[number] = mapEntry(lines, entry.contents());
-                    } else {
-                        labelled[number] = entry.contents();
+                    var name = entry.entry().getName().substring(0, entry.entry().getName().length()-".class".length());
+                    var lines = mappings.get(name);
+                    var patchName = name;
+                    var innerIndex = patchName.indexOf('$');
+                    if (innerIndex != -1) {
+                        patchName = patchName.substring(0, innerIndex);
                     }
+                    var patch = patches.get(patchName);
+                    labelled[number] = mapEntry(lines, patch, entry.contents());
                 } else {
                     labelled[number] = entry.contents();
                 }
@@ -158,16 +195,22 @@ public class Main implements Runnable {
         }
     }
 
-    private byte[] mapEntry(Map<Integer, Integer> lines, byte[] contents) {
+    private byte[] mapEntry(Map<Integer, Integer> lines, PatchFile patch, byte[] contents) {
+        if (lines == null && patch == null) {
+            return contents;
+        }
         var reader = new ClassReader(contents);
         var writer = new ClassWriter(0);
+        Map<Integer, Integer> finalLines = lines == null ? Map.of() : lines;
+        PatchFile finalPatch = patch == null ? PatchFile.EMPTY : patch;
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                 return new MethodVisitor(Opcodes.ASM9, super.visitMethod(access, name, descriptor, signature, exceptions)) {
                     @Override
                     public void visitLineNumber(int line, Label start) {
-                        var lineNumber = lines.getOrDefault(line, line);
+                        var lineNumber = finalLines.getOrDefault(line, line);
+                        lineNumber = finalPatch.remapLineNumber(lineNumber);
                         super.visitLineNumber(lineNumber, start);
                     }
                 };
