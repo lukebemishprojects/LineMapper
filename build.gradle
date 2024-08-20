@@ -1,0 +1,58 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'com.gradleup.shadow'
+}
+
+group = 'dev.lukebemish'
+// TODO: managed versioning
+version = '0.1.0'
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+def mainClassName = 'dev.lukebemish.linemapper.cli.Main'
+
+jar {
+    manifest {
+        attributes([
+                'Main-Class': mainClassName,
+                'Implementation-Version': project.version as String
+        ])
+    }
+}
+
+shadowJar {
+    manifest {
+        attributes([
+                'Main-Class': mainClassName,
+                'Implementation-Version': project.version as String
+        ])
+    }
+}
+
+dependencies {
+    compileOnly cLibs.bundles.compileonly
+    implementation 'info.picocli:picocli:4.7.6'
+    implementation 'org.ow2.asm:asm:9.7'
+    implementation 'org.slf4j:slf4j-simple:2.0.13'
+    annotationProcessor cLibs.bundles.annotationprocessor
+    annotationProcessor 'info.picocli:picocli-codegen:4.7.6'
+}
+
+compileJava {
+    options.compilerArgs += ["-Aproject=${project.group}/${project.name}"]
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
+    }
+}
