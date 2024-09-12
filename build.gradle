@@ -8,11 +8,20 @@ group = 'dev.lukebemish'
 // TODO: managed versioning
 version = '0.1.0'
 
+sourceSets {
+    jst {}
+}
+
 java {
     withSourcesJar()
     withJavadocJar()
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
+    }
+    registerFeature('jst') {
+        usingSourceSet(sourceSets.jst)
+        withSourcesJar()
+        withJavadocJar()
     }
 }
 
@@ -43,6 +52,10 @@ dependencies {
     implementation 'org.slf4j:slf4j-simple:2.0.13'
     annotationProcessor cLibs.bundles.annotationprocessor
     annotationProcessor 'info.picocli:picocli-codegen:4.7.6'
+
+    jstImplementation 'net.neoforged.jst:jst-api:1.0.67'
+    jstCompileOnly cLibs.bundles.compileonly
+    jstAnnotationProcessor cLibs.bundles.annotationprocessor
 }
 
 compileJava {

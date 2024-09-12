@@ -7,17 +7,17 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-class PatchFile {
-    public static final PatchFile EMPTY = new PatchFile(List.of());
+class SingleFileOffset {
+    public static final SingleFileOffset EMPTY = new SingleFileOffset(List.of());
     private static final Pattern HUNK_OFFSET = Pattern.compile("@@ -(\\d+),(\\d+) \\+([_\\d]+),(\\d+) @@");
 
-    private PatchFile(List<Offset> offsets) {
+    SingleFileOffset(List<Offset> offsets) {
         this.offsets = offsets;
     }
 
-    private record Offset(int initial, int eventual) implements Comparable<Offset> {
+    record Offset(int initial, int eventual) implements Comparable<Offset> {
         @Override
-        public int compareTo(@NotNull PatchFile.Offset o) {
+        public int compareTo(@NotNull SingleFileOffset.Offset o) {
             return Integer.compare(initial, o.initial);
         }
     }
@@ -35,7 +35,7 @@ class PatchFile {
         return lineNumber + totalOffset;
     }
 
-    public static PatchFile fromLines(String name, List<String> lines) {
+    public static SingleFileOffset fromPatchLines(String name, List<String> lines) {
         int initialLineNumber = 0;
         int eventualLineNumber = 0;
         int totalPatchDelta = 0;
@@ -80,6 +80,6 @@ class PatchFile {
                 }
             }
         }
-        return new PatchFile(offsets);
+        return new SingleFileOffset(offsets);
     }
 }

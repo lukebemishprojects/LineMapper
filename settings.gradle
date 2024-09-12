@@ -18,6 +18,12 @@ plugins {
 dependencyResolutionManagement {
     repositories {
         mavenCentral()
+        maven {
+            url "https://www.jetbrains.com/intellij-repository/releases/"
+        }
+        maven {
+            url "https://cache-redirector.jetbrains.com/intellij-dependencies/"
+        }
     }
 
     repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
