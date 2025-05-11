@@ -147,7 +147,7 @@
                         "GPG_KEY": "${{ secrets.GPG_KEY }}",
                         "GPG_PASSWORD": "${{ secrets.GPG_PASSWORD }}",
                         "CENTRAL_PASSWORD": "${{ secrets.CENTRAL_PASSWORD }}",
-                        "CENTRAL_USER": "${{ secrets.CENTRAL_USER }}",
+                        "CENTRAL_USERNAME": "${{ secrets.CENTRAL_USERNAME }}",
                         "STAGING_MAVEN_PASSWORD": "${{ secrets.STAGING_MAVEN_PASSWORD }}",
                         "STAGING_MAVEN_USER": "github",
                         "STAGING_MAVEN_URL": "https://maven.lukebemish.dev/staging/"
